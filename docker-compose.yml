@@ -1,0 +1,118 @@
+name: wa3y
+
+services:
+  wa3y_app:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: wa3y_app
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+      - ./docker/php/php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - wa3y_network
+    depends_on:
+      - wa3y_mysql
+      - wa3y_redis
+
+  wa3y_nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: Dockerfile
+    container_name: wa3y_nginx
+    ports:
+      - "8001:80"
+    volumes:
+      - ./:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - wa3y_app
+    networks:
+      - wa3y_network
+
+  wa3y_mysql:
+    image: mysql:8.0
+    container_name: wa3y_mysql
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_DATABASE: wa3y_db
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_PASSWORD: wa3y_password
+      MYSQL_USER: wa3y_user
+    volumes:
+      - wa3y_mysql_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+    networks:
+      - wa3y_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  wa3y_redis:
+    image: redis:7-alpine
+    container_name: wa3y_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - wa3y_redis_data:/data
+    networks:
+      - wa3y_network
+
+  wa3y_phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: wa3y_phpmyadmin
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: wa3y_mysql
+      PMA_USER: wa3y_user
+      PMA_PASSWORD: wa3y_password
+    networks:
+      - wa3y_network
+    depends_on:
+      - wa3y_mysql
+
+  wa3y_queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: wa3y_queue
+    volumes:
+      - ./:/var/www/html
+      - ./docker/php/php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - wa3y_network
+    depends_on:
+      - wa3y_mysql
+      - wa3y_redis
+    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+
+  wa3y_scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: wa3y_scheduler
+    volumes:
+      - ./:/var/www/html
+      - ./docker/php/php.ini:/usr/local/etc/php/conf.d/custom.ini
+    networks:
+      - wa3y_network
+    depends_on:
+      - wa3y_mysql
+      - wa3y_redis
+    command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+
+volumes:
+  wa3y_mysql_data:
+    driver: local
+  wa3y_redis_data:
+    driver: local
+
+networks:
+  wa3y_network:
+    driver: bridge
